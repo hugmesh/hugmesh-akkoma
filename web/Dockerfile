@@ -1,0 +1,59 @@
+# hugmesh-akkoma-web: the front door of a standalone Akkoma. One image holds the Spring Boot service and
+# the built Mastodon web UI. Build context is this directory (web/):
+#   docker buildx build -t hugmesh-akkoma-web:local web
+#
+# The UI is built here from hugmesh-mastodon-ui at a PINNED COMMIT (UI_REF), the same way Akkoma is built
+# from a pinned upstream commit: the build fails if the fetched commit is not the pinned one.
+#
+# syntax=docker/dockerfile:1
+
+ARG NODE_IMAGE=node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
+ARG JDK_IMAGE=eclipse-temurin:25-jdk-noble@sha256:8599ea2d8f71696f00dcdf46213a4b65fa97ceeaa318671fccba6b0af2727792
+ARG JRE_IMAGE=eclipse-temurin:25-jre-noble@sha256:3c6d7b40c2e78d4a8f4fe00af8165c706b34faf672dc21ff0924e583559ec6c2
+
+# ---- the web UI -------------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS ui
+ARG UI_REPO=https://github.com/hugmesh/hugmesh-mastodon-ui.git
+ARG UI_REF=ad83743a89223dabfbd59299bd770d345f1d9dec
+RUN apk add --no-cache git
+WORKDIR /ui
+RUN git init -q . \
+ && git fetch -q --depth 1 "$UI_REPO" "$UI_REF" \
+ && git checkout -q FETCH_HEAD \
+ && test "$(git rev-parse HEAD)" = "$UI_REF" \
+ || { echo "the fetched UI commit is not the pinned $UI_REF"; exit 1; }
+RUN npm ci --no-audit --no-fund
+RUN npm run build:standalone \
+ && test -f dist/standalone/browser/index.html
+
+# ---- the service ------------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM ${JDK_IMAGE} AS build
+WORKDIR /src
+COPY mvnw pom.xml ./
+COPY .mvn .mvn
+RUN ./mvnw -B -ntp -q dependency:go-offline
+COPY src src
+RUN ./mvnw -B -ntp -q -DskipTests package \
+ && mv target/hugmesh-akkoma-web-*.jar /app.jar
+
+# ---- runtime ----------------------------------------------------------------------------------
+FROM ${JRE_IMAGE}
+ARG VERSION=0.5.1-beta.1
+LABEL org.opencontainers.image.title="hugmesh-akkoma-web" \
+      org.opencontainers.image.description="Front door for a standalone Akkoma: web UI, sign-in through Akkoma's OAuth, Mastodon API proxy" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="${VERSION}"
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && install -d -o 1000 -g 1000 /var/lib/hugmesh-web   # uid 1000 is the base image's own unprivileged user
+COPY --from=build /app.jar /app/app.jar
+COPY --from=ui /ui/dist/standalone/browser /app/ui
+ENV HUGMESH_WEB_UI_DIR=/app/ui \
+    HUGMESH_WEB_STATE_DIR=/var/lib/hugmesh-web \
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
+USER 1000:1000
+EXPOSE 8080
+VOLUME ["/var/lib/hugmesh-web"]
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=5 \
+  CMD curl -fsS http://127.0.0.1:8080/actuator/health/liveness || exit 1
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

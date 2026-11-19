@@ -17,13 +17,28 @@ docker compose up -d
 docker compose exec akkoma /opt/akkoma/bin/pleroma_ctl user new <nick> <email> --admin
 ```
 
-`compose/docker-compose.yml` starts PostgreSQL, copies `config/standalone.exs` into place as `root:1000` mode `0440` (the
-release refuses a looser file), runs the migrations, then starts Akkoma on `127.0.0.1:4000` with the same hardening the
-HugMesh cluster applies: read-only root filesystem, no capabilities, `no-new-privileges`. Put a TLS reverse proxy in front
-for a public instance. Everything instance-specific is an environment variable; the list is at the top of
-`config/standalone.exs`. Nothing in it needs Casdoor, a gateway, Vault or Kubernetes.
+Then open `http://localhost:8080` (or your `AKKOMA_HOST` behind a TLS reverse proxy) and sign in. Three images run:
 
-Any Mastodon-compatible client can use the instance, because Akkoma serves the Mastodon client API on the same host.
+- **`ghcr.io/hugmesh/hugmesh-akkoma`** is the Akkoma server (this repository's root).
+- **`ghcr.io/hugmesh/hugmesh-akkoma-web`** is the front door ([`web/`](web/)): a Spring Boot service that serves the
+  Mastodon web UI, signs users in through Akkoma's own OAuth page, keeps each user's access token on the server (the
+  browser only holds an opaque HttpOnly cookie), and proxies the Mastodon API. It also answers for Akkoma on the public
+  host, so one reverse-proxy rule, everything to the web service, is all a public instance needs: other Mastodon
+  clients (`/api/v1`, `/oauth`), federation (`/inbox`, `/users`, `/.well-known`, `/nodeinfo`) and media still reach Akkoma.
+- PostgreSQL.
+
+`compose/docker-compose.yml` copies `config/standalone.exs` into place as `root:1000` mode `0440` (the release refuses a
+looser file), runs the migrations, and starts everything with the hardening the HugMesh cluster applies: read-only root
+filesystems, no capabilities, `no-new-privileges`. Only the web service is published (on `127.0.0.1`). Everything
+instance-specific is an environment variable; the list is at the top of `config/standalone.exs`. Nothing here needs
+Casdoor, a gateway, Vault or Kubernetes. To run the server alone, without the web UI:
+`docker compose up -d db config-init migrate akkoma`.
+
+The web UI is [hugmesh-mastodon-ui](https://github.com/hugmesh/hugmesh-mastodon-ui)'s standalone build
+(`npm run build:standalone`), built into the web image from a pinned commit (`UI_REF` in `web/Dockerfile`).
+
+Known limits: live updates. Akkoma 3.20.1 serves its stream over WebSocket only, which the UI does not use, so a
+timeline refreshes when you load it or act, not as others post.
 
 ## Run it inside HugMesh
 
@@ -125,6 +140,7 @@ source is still to do; see [`docs/DOMAIN-LOCK.md`](https://github.com/hugmesh/hu
 docker buildx build --platform linux/amd64 --load -t hugmesh-akkoma:local .
 bash smoke-test.sh hugmesh-akkoma:local 3.20.1
 bash scripts/test-release-channel.sh
+(cd web && ./mvnw verify) && bash web/smoke-test.sh hugmesh-akkoma-web:local   # after: docker build -t hugmesh-akkoma-web:local web
 ```
 
 `smoke-test.sh` uses throwaway Docker resources only, and removes them on exit. It checks that:
