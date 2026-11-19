@@ -1,0 +1,86 @@
+# hugmesh-akkoma on its own: Akkoma + PostgreSQL, nothing else from HugMesh.
+#
+#   cp .env.example .env          # then edit it: host, and the three generated secrets
+#   docker compose up -d
+#   docker compose exec akkoma /opt/akkoma/bin/pleroma_ctl user new <nick> <email> --admin
+#
+# The image is ghcr.io/hugmesh/hugmesh-akkoma (set AKKOMA_IMAGE to pin a tag or digest).
+# Akkoma listens on 127.0.0.1:${AKKOMA_BIND_PORT:-4000}; put a TLS reverse proxy in front
+# of it for a public instance. Uses the same hardening the HugMesh cluster applies:
+# read-only root filesystem, no capabilities, config mounted 0440.
+name: hugmesh-akkoma
+
+x-akkoma: &akkoma
+  image: ${AKKOMA_IMAGE:-ghcr.io/hugmesh/hugmesh-akkoma:beta}
+  environment: &akkoma-env
+    AKKOMA_HOST: ${AKKOMA_HOST:?set AKKOMA_HOST in .env}
+    AKKOMA_SCHEME: ${AKKOMA_SCHEME:-https}
+    AKKOMA_PORT: ${AKKOMA_PORT:-}
+    AKKOMA_NAME: ${AKKOMA_NAME:-Akkoma}
+    AKKOMA_EMAIL: ${AKKOMA_EMAIL:-}
+    AKKOMA_REGISTRATIONS_OPEN: ${AKKOMA_REGISTRATIONS_OPEN:-false}
+    SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
+    SIGNING_SALT: ${SIGNING_SALT:?set SIGNING_SALT in .env}
+    DB_HOST: db
+    DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    AKKOMA_SMTP_RELAY: ${AKKOMA_SMTP_RELAY:-}
+    AKKOMA_SMTP_PORT: ${AKKOMA_SMTP_PORT:-587}
+    AKKOMA_SMTP_USER: ${AKKOMA_SMTP_USER:-}
+    AKKOMA_SMTP_PASSWORD: ${AKKOMA_SMTP_PASSWORD:-}
+    AKKOMA_SMTP_FROM: ${AKKOMA_SMTP_FROM:-}
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  volumes:
+    - config:/etc/akkoma:ro
+    - uploads:/var/lib/akkoma/uploads
+    - static:/var/lib/akkoma/static
+
+services:
+  db:
+    image: ${AKKOMA_PG_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: akkoma
+      POSTGRES_DB: akkoma
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U akkoma -d akkoma"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # The release refuses a config that is world-readable or group-writable, and a bind
+  # mount keeps the host's owner. So a root one-shot copies it into a volume as
+  # root:1000 mode 0440, the way the cluster's fsGroup does.
+  config-init:
+    image: ${AKKOMA_IMAGE:-ghcr.io/hugmesh/hugmesh-akkoma:beta}
+    user: "0:0"
+    entrypoint: ["sh", "-c", "cat /seed/config.exs > /etc/akkoma/config.exs && chown 0:1000 /etc/akkoma/config.exs && chmod 0440 /etc/akkoma/config.exs"]
+    volumes:
+      - ../config/standalone.exs:/seed/config.exs:ro
+      - config:/etc/akkoma
+    network_mode: none
+
+  migrate:
+    <<: *akkoma
+    command: ["/opt/akkoma/bin/pleroma_ctl", "migrate"]
+    depends_on:
+      db: {condition: service_healthy}
+      config-init: {condition: service_completed_successfully}
+    restart: "no"
+
+  akkoma:
+    <<: *akkoma
+    restart: unless-stopped
+    ports: ["127.0.0.1:${AKKOMA_BIND_PORT:-4000}:4000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  config:
+  uploads:
+  static:
+  pgdata:
