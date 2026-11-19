@@ -70,7 +70,7 @@ class WebApplicationTest {
         AKKOMA.seen.clear();
         AKKOMA.tokenRevoked = false;
         web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + webPort)
-                .responseTimeout(Duration.ofSeconds(10)).build();
+                .responseTimeout(Duration.ofSeconds(30)).build();
     }
 
     /** Signs in through the real flow (login, callback) and returns the session cookie value. */

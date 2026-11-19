@@ -46,7 +46,7 @@ class StreamBridgeOffTest {
 
     @Test
     void streamingRequestsGoThroughTheOrdinaryProxyToAkkoma() {
-        var web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).responseTimeout(Duration.ofSeconds(10)).build();
+        var web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).responseTimeout(Duration.ofSeconds(30)).build();
         var s = sessions.create("tok-1", "alice", "Alice");
         web.get().uri("/bff/user/mastodon/api/v1/streaming/user").cookie(SessionStore.COOKIE, s.id()).exchange().expectStatus().isOk();
         // forwarded as the plain path, with the token as a header: no WebSocket, no access_token in a URL

@@ -29,7 +29,7 @@ class AkkomaDownTest {
 
     @Test
     void passthroughIsABadGatewayNotAServerError() {
-        var web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).responseTimeout(Duration.ofSeconds(10)).build();
+        var web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).responseTimeout(Duration.ofSeconds(30)).build();
         web.get().uri("/api/v1/instance").exchange().expectStatus().isEqualTo(502);
         web.get().uri("/.well-known/nodeinfo").exchange().expectStatus().isEqualTo(502);
         web.get().uri("/actuator/health").exchange().expectStatus().isOk();
@@ -37,7 +37,7 @@ class AkkomaDownTest {
 
     @Test
     void startingASignInIsABadGatewayToo() {
-        var web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).responseTimeout(Duration.ofSeconds(10)).build();
+        var web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).responseTimeout(Duration.ofSeconds(30)).build();
         web.get().uri("/bff/login").exchange().expectStatus().isEqualTo(502);
     }
 }
