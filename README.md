@@ -37,8 +37,12 @@ Casdoor, a gateway, Vault or Kubernetes. To run the server alone, without the we
 The web UI is [hugmesh-mastodon-ui](https://github.com/hugmesh/hugmesh-mastodon-ui)'s standalone build
 (`npm run build:standalone`), built into the web image from a pinned commit (`UI_REF` in `web/Dockerfile`).
 
-Known limits: live updates. Akkoma 3.20.1 serves its stream over WebSocket only, which the UI does not use, so a
-timeline refreshes when you load it or act, not as others post.
+**Live updates.** Akkoma 3.20.1 streams over WebSocket only, while the web UI reads Server-Sent Events. The web service
+bridges the two for a standalone deployment: it opens Akkoma's WebSocket with the signed-in user's token (which never
+reaches the browser) and re-emits each frame as an SSE event on `/bff/user/mastodon/api/v1/streaming/{user,public,...}`.
+A status posted by someone else shows in an open page within a fraction of a second, without a reload. The bridge is
+standalone-only: `HUGMESH_WEB_STREAM_BRIDGE=false` removes it, and inside HugMesh the UI keeps using the mesh's own
+gateway and BFF proxy, unchanged (the UI's stream code is not modified).
 
 ## Run it inside HugMesh
 

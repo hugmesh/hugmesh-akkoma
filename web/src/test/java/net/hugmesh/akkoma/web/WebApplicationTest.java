@@ -231,14 +231,60 @@ class WebApplicationTest {
     }
 
     @Test
-    void streamingEventsArriveAsTheyAreSent() {
+    void akkomasWebSocketStreamArrivesAsServerSentEvents() {
         String sid = signIn();
-        var flux = web.get().uri("/bff/user/mastodon/api/v1/streaming/user").cookie(SessionStore.COOKIE, sid)
+        AKKOMA.seen.clear();
+        var events = web.get().uri("/bff/user/mastodon/api/v1/streaming/user").cookie(SessionStore.COOKIE, sid)
                 .accept(MediaType.TEXT_EVENT_STREAM).exchange().expectStatus().isOk()
-                .returnResult(String.class).getResponseBody().take(2).collectList().block(Duration.ofSeconds(5));
-        // the SSE decoder strips the "data:" field name; two separate events arrived
-        assertThat(flux).containsExactly("one", "two");
-        assertThat(AKKOMA.last("/api/v1/streaming/user").authorization()).isEqualTo("Bearer tok-1");
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .returnResult(new org.springframework.core.ParameterizedTypeReference<org.springframework.http.codec.ServerSentEvent<String>>() {}).getResponseBody()
+                .take(3).collectList().block(Duration.ofSeconds(8));
+        assertThat(events).hasSize(3);
+        assertThat(events.get(0).event()).isEqualTo("update");
+        assertThat(String.valueOf(events.get(0).data())).contains("hello live").contains("\"id\"");
+        assertThat(events.get(1).event()).isEqualTo("delete");
+        assertThat(String.valueOf(events.get(1).data())).isEqualTo("123");
+        // an event with no payload still arrives; a frame that is not JSON is dropped, never forwarded
+        assertThat(events.get(2).event()).isEqualTo("filters_changed");
+        // Akkoma was spoken to over WebSocket with the SERVER-HELD token; the browser sent none
+        var s = AKKOMA.last("/api/v1/streaming");
+        assertThat(s).isNotNull();
+        assertThat(StubAkkoma.queryParam("/x?" + s.query(), "stream")).isEqualTo("user");
+        assertThat(StubAkkoma.queryParam("/x?" + s.query(), "access_token")).isEqualTo("tok-1");
+    }
+
+    @Test
+    void streamNamesMapToAkkomasAndOthersAreRefused() {
+        String sid = signIn();
+        for (String ok : List.of("/public/local", "/user/notification", "/direct")) {
+            AKKOMA.seen.clear();
+            web.get().uri("/bff/user/mastodon/api/v1/streaming" + ok).cookie(SessionStore.COOKIE, sid).accept(MediaType.TEXT_EVENT_STREAM)
+                    .exchange().expectStatus().isOk().returnResult(String.class).getResponseBody().take(1).blockLast(Duration.ofSeconds(8));
+            assertThat(StubAkkoma.queryParam("/x?" + AKKOMA.last("/api/v1/streaming").query(), "stream")).isEqualTo(ok.substring(1).replace('/', ':'));
+        }
+        AKKOMA.seen.clear();
+        web.get().uri("/bff/user/mastodon/api/v1/streaming/hashtag?tag=cats").cookie(SessionStore.COOKIE, sid).accept(MediaType.TEXT_EVENT_STREAM)
+                .exchange().expectStatus().isOk().returnResult(String.class).getResponseBody().take(1).blockLast(Duration.ofSeconds(8));
+        assertThat(StubAkkoma.queryParam("/x?" + AKKOMA.last("/api/v1/streaming").query(), "stream")).isEqualTo("hashtag");
+        assertThat(StubAkkoma.queryParam("/x?" + AKKOMA.last("/api/v1/streaming").query(), "tag")).isEqualTo("cats");
+        for (String bad : List.of("/admin", "/user/../../x", "/public/local/evil", "/hashtag?tag=a%26access_token%3Dx")) {
+            web.get().uri(java.net.URI.create("http://127.0.0.1:" + webPort + "/bff/user/mastodon/api/v1/streaming" + bad))
+                    .cookie(SessionStore.COOKIE, sid).exchange().expectStatus().value(st -> assertThat(st).isIn(400, 404));
+        }
+    }
+
+    @Test
+    void theStreamNeedsASession() {
+        web.get().uri("/bff/user/mastodon/api/v1/streaming/user").accept(MediaType.TEXT_EVENT_STREAM).exchange().expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void aRevokedTokenEndsTheStreamInsteadOfHangingIt() {
+        String sid = signIn();
+        var events = web.get().uri("/bff/user/mastodon/api/v1/streaming/user").cookie(SessionStore.COOKIE, sid)
+                .accept(MediaType.TEXT_EVENT_STREAM).exchange().expectStatus().isOk()
+                .returnResult(String.class).getResponseBody().take(1).collectList().block(Duration.ofSeconds(8));
+        assertThat(events).isNotEmpty();
     }
 
     @Test

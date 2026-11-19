@@ -28,11 +28,15 @@ final class StubAkkoma {
             r.post("/oauth/token", (q, s) -> record(q, s, null, "application/json"));
             r.post("/oauth/revoke", (q, s) -> record(q, s, "{}", "application/json"));
             r.get("/api/v1/accounts/verify_credentials", (q, s) -> record(q, s, null, "application/json"));
-            r.route(q -> q.uri().startsWith("/api/v1/streaming/user"), (q, s) -> {
+            // Akkoma's streaming API is a WebSocket only: two frames in its own format, then it holds the socket open
+            r.get("/api/v1/streaming", (q, res) -> {
                 seen.add(snapshot(q, ""));
-                return s.header("Content-Type", "text/event-stream").sendString(
-                        Flux.just("event: update\ndata: one\n\n", "event: update\ndata: two\n\n")
-                                .delayElements(Duration.ofMillis(150)));
+                if (!"Bearer tok-1".equals("Bearer " + queryParam(q.uri(), "access_token"))) return res.status(401).send();
+                return res.sendWebsocket((in, out) -> out.sendString(Flux.just(
+                        "{\"event\":\"update\",\"payload\":\"{\\\"id\\\":\\\"1\\\",\\\"content\\\":\\\"hello live\\\"}\",\"stream\":[\"user\"]}",
+                        "{\"event\":\"delete\",\"payload\":\"123\",\"stream\":[\"user\"]}",
+                        "{\"event\":\"filters_changed\",\"stream\":[\"user\"]}",
+                        "this is not json")).then(Mono.never()));
             });
             r.route(q -> true, (q, s) -> record(q, s, null, "application/json"));
         }).bindNow();
@@ -81,6 +85,15 @@ final class StubAkkoma {
                     + "\",\"query\":\"" + seenReq.query() + "\",\"body\":\"" + body.replace("\"", "'").replace("\r", "").replace("\n", "|") + "\"}";
             return s.header("Content-Type", ctype).header("Set-Cookie", "_akk=1; Path=/").sendString(Mono.just(echo)).then();
         });
+    }
+
+    static String queryParam(String uri, String name) {
+        int i = uri.indexOf('?');
+        if (i < 0) return "";
+        for (String kv : uri.substring(i + 1).split("&")) {
+            if (kv.startsWith(name + "=")) return java.net.URLDecoder.decode(kv.substring(name.length() + 1), StandardCharsets.UTF_8);
+        }
+        return "";
     }
 
     private static String nz(String s) { return s == null ? "" : s; }

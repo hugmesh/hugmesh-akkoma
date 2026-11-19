@@ -26,3 +26,6 @@ hugmesh:
     public-url: ${HUGMESH_WEB_PUBLIC_URL:http://localhost:8080}
     ui-dir: ${HUGMESH_WEB_UI_DIR:/app/ui}
     state-dir: ${HUGMESH_WEB_STATE_DIR:/var/lib/hugmesh-web}
+    # Standalone: turn Akkoma's WebSocket streaming into the Server-Sent Events the UI reads. Set false to pass
+    # streaming requests through to Akkoma untouched.
+    stream-bridge: ${HUGMESH_WEB_STREAM_BRIDGE:true}

@@ -15,6 +15,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param sessionTtl  how long a sign-in lasts.
  * @param scopes      OAuth scopes requested from Akkoma.
  * @param clientName  the name Akkoma shows on its authorisation page.
+ * @param streamBridge whether this service turns Akkoma's WebSocket streaming into the Server-Sent Events the web
+ *                    UI reads. On for a standalone deployment, which has nothing else to do it. Inside HugMesh the
+ *                    mesh's own proxies carry the stream and this service is not used.
  */
 @ConfigurationProperties("hugmesh.web")
 public record WebProperties(
@@ -24,7 +27,8 @@ public record WebProperties(
         @DefaultValue("/var/lib/hugmesh-web") Path stateDir,
         @DefaultValue("12h") Duration sessionTtl,
         @DefaultValue("read write follow push") String scopes,
-        @DefaultValue("HugMesh web") String clientName) {
+        @DefaultValue("HugMesh web") String clientName,
+        @DefaultValue("true") boolean streamBridge) {
 
     public WebProperties {
         akkomaUrl = stripTrailingSlash(akkomaUrl);

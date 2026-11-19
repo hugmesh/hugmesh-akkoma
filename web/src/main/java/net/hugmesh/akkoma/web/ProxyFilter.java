@@ -70,6 +70,10 @@ public class ProxyFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange ex, WebFilterChain chain) {
         String path = ex.getRequest().getPath().value();
+        if (props.streamBridge()
+                && (path.equals(API_PREFIX + "/api/v1/streaming") || path.startsWith(API_PREFIX + "/api/v1/streaming/"))) {
+            return chain.filter(ex); // StreamController bridges Akkoma's WebSocket to Server-Sent Events
+        }
         if (path.equals(API_PREFIX) || path.startsWith(API_PREFIX + "/")) {
             return signedIn(ex, path.substring(API_PREFIX.length()),
                     ex.getRequest().getURI().getRawPath().substring(API_PREFIX.length()));
