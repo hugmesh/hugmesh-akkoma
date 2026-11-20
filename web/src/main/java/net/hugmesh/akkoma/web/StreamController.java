@@ -67,7 +67,9 @@ public class StreamController {
     }
 
     /** `/streaming/user`, `/streaming/public/local`, `/streaming/hashtag?tag=x`, `/streaming/list?list=1`, ... */
-    @GetMapping(value = "/bff/user/mastodon/api/v1/streaming/{*rest}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    // No `produces`: a refusal (401/400) must be an ordinary empty response. Declaring text/event-stream on the mapping
+    // made those empty answers go out as an event stream with no events, which can leave the client waiting.
+    @GetMapping("/bff/user/mastodon/api/v1/streaming/{*rest}")
     public Mono<ResponseEntity<Flux<ServerSentEvent<String>>>> stream(
             @PathVariable("rest") String rest,
             @RequestParam(name = "tag", required = false) String tag,
@@ -97,6 +99,7 @@ public class StreamController {
         // A comment line now and then keeps idle connections open through proxies and tells the browser we are alive.
         Flux<ServerSentEvent<String>> beat = Flux.interval(HEARTBEAT).map(i -> ServerSentEvent.<String>builder().comment("thump").build());
         return Mono.just(ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .header("X-Accel-Buffering", "no")
                 .body(Flux.merge(events, beat).takeUntilOther(events.ignoreElements().then(Mono.just(1)).filter(x -> false))));

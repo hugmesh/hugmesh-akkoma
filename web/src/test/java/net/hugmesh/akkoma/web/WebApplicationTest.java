@@ -69,7 +69,7 @@ class WebApplicationTest {
     void client() {
         AKKOMA.seen.clear();
         AKKOMA.tokenRevoked = false;
-        web = WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + webPort)
+        web = WebTestClient.bindToServer(NoPool.connector()).baseUrl("http://127.0.0.1:" + webPort)
                 .responseTimeout(Duration.ofSeconds(30)).build();
     }
 
