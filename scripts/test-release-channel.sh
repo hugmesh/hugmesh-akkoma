@@ -19,7 +19,10 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 script="$here/release-channel.sh"
-workflow="$root/.github/workflows/release.yml"
+# WORKFLOW / VFILE / TAG_PREFIX select the artifact under test: the Akkoma image (the defaults) or the web
+# image (WORKFLOW=.github/workflows/release-web.yml VFILE=web/VERSION TAG_PREFIX=web-v).
+workflow="${WORKFLOW:-.github/workflows/release.yml}"
+case "$workflow" in /*) ;; *) workflow="$root/$workflow" ;; esac
 registry="$(sed -n 's/^  REGISTRY: *//p' "$workflow")"
 image_name="$(sed -n 's/^  IMAGE_NAME: *//p' "$workflow")"
 if [ -z "$registry" ] || [ -z "$image_name" ]; then
@@ -27,8 +30,8 @@ if [ -z "$registry" ] || [ -z "$image_name" ]; then
   exit 1
 fi
 image="$registry/$image_name"
-vfile=VERSION
-P=v
+vfile="${VFILE:-VERSION}"
+P="${TAG_PREFIX:-v}"
 
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/release-channel-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -318,13 +321,13 @@ run_case "release branch with another line's version" 0.4.1 refs/heads/release/0
 expect_refused "release/0.3 carrying 0.4.1 is refused" "must carry an X.Y.* version"
 
 run_case "other branch" 0.5.0-beta.1 refs/heads/feature/x "$m6"
-expect_refused "other branches are refused" "only main, release/X.Y branches and v* tags publish"
+expect_refused "other branches are refused" "only main, release/X.Y branches and ${P}* tags publish"
 
 run_case "an akkoma-v tag (the prefix this image used inside hugmesh-generator)" 0.4.1 refs/tags/akkoma-v0.4.1 "$r41"
-expect_refused "a tag without the v prefix is refused" "only main, release/X.Y branches and v* tags publish"
+expect_refused "a tag without the v prefix is refused" "only main, release/X.Y branches and ${P}* tags publish"
 
 run_case "a studio-v tag" 0.4.1 refs/tags/studio-v0.4.1 "$r41"
-expect_refused "a studio-v tag is refused" "only main, release/X.Y branches and v* tags publish"
+expect_refused "a studio-v tag is refused" "only main, release/X.Y branches and ${P}* tags publish"
 
 (cd "$work/clone" && git remote set-url origin "$work/nowhere.git")
 run_case "unreadable remote" 0.4.1 refs/tags/${P}0.4.1 "$r41"
@@ -408,6 +411,8 @@ PY
 }
 # the GitHub-release step reads the pinned upstream version and commit from the Dockerfile
 printf 'ARG AKKOMA_VERSION=3.20.1\nARG AKKOMA_COMMIT=0000000000000000000000000000000000000000\n' >"$work/clone/Dockerfile"
+mkdir -p "$work/clone/web"
+printf 'ARG UI_REF=0000000000000000000000000000000000000000\n' >"$work/clone/web/Dockerfile"
 step_body "Compute tags and labels" "$work/meta.sh"
 step_body "Create the GitHub release" "$work/release.sh"
 step_body "Check every pushed tag resolves to the signed digest" "$work/digest.sh"
@@ -658,13 +663,13 @@ lacks() {
   if grep -F -e "$2" "$workflow" >/dev/null; then bad "workflow: $1 (found: $2)"; else ok "workflow: $1"; fi
 }
 has "push trigger includes release/**" "branches: [main, 'release/**']"
-has "tag trigger is v*" "tags: ['v*']"
+has "tag trigger is ${P}*" "tags: ['${P}*']"
 has "the channel marker scripts/release.sh requires" "hugmesh-release-channels: beta+stable"
 has "a change to the channel script starts a run" "- 'scripts/release-channel.sh'"
 has "a change to this self-test starts a run" "- 'scripts/test-release-channel.sh'"
-has "version job runs this self-test" "run: bash scripts/test-release-channel.sh"
+has "version job runs this self-test" "bash scripts/test-release-channel.sh"
 has "version job calls the channel script" "bash scripts/release-channel.sh)"
-has "every call names the tag prefix" "TAG_PREFIX=v IMAGE_NAME="
+has "every call names the tag prefix" "TAG_PREFIX=${P} IMAGE_NAME="
 has "version regex still in the version job" "grep -aEx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?'"
 has "SNAPSHOT refusal still in the version job" "refusing to publish a SNAPSHOT version"
 lacks "no job reads the version job's tag list" 'needs.version.outputs.image_tags'
@@ -682,7 +687,7 @@ has "every pushed tag is checked against the signed digest" "Check every pushed 
 has "beta GitHub release is a prerelease, never Latest" "beta:*-*) args+=(--prerelease --latest=false)"
 has "stable GitHub release is a full release, not Latest" "stable:*) args+=(--latest=false)"
 lacks "no GitHub release of this image is marked Latest" "args+=(--latest)"
-has "the job summary names release/X.Y runs in the signing identity" "refs/(heads/main|heads/release/[0-9]+[.][0-9]+|tags/v.*)"
+has "the job summary names release/X.Y runs in the signing identity" "refs/(heads/main|heads/release/[0-9]+[.][0-9]+|tags/${P}.*)"
 lacks "no pull_request trigger" "pull_request:"
 lacks "no unconditional :latest refusal left" 'if "latest" in tags:'
 
@@ -734,7 +739,7 @@ done <"$work/order"
 # 204 is "sent"; any other answer, or no connection, must be exactly one
 # ::warning:: carrying GitHub's message, and exit 0. The curl on PATH refuses
 # every URL that is not api.github.com, so nothing leaves this machine.
-python3 - "$workflow" "$work/notify-bin" "hugmesh/hugmesh-generator" "v0.2.0-beta.1" "0.2.0-beta.1" >"$work/notify" <<'PY'
+python3 - "$workflow" "$work/notify-bin" "hugmesh/hugmesh-generator" "${P}0.2.0-beta.1" "0.2.0-beta.1" >"$work/notify" <<'PY'
 import http.server, json, os, shutil, socket, subprocess, sys, textwrap, threading
 
 workflow, bindir, repo, ref_name, version = sys.argv[1:6]

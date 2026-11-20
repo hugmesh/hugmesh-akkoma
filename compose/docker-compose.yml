@@ -1,13 +1,19 @@
-# hugmesh-akkoma on its own: Akkoma + PostgreSQL, nothing else from HugMesh.
+# hugmesh-akkoma on its own: Akkoma + PostgreSQL + the web front door, nothing else from HugMesh.
 #
 #   cp .env.example .env          # then edit it: host, and the three generated secrets
 #   docker compose up -d
 #   docker compose exec akkoma /opt/akkoma/bin/pleroma_ctl user new <nick> <email> --admin
+#   open http://localhost:8080    (or your AKKOMA_HOST behind a TLS reverse proxy)
 #
-# The image is ghcr.io/hugmesh/hugmesh-akkoma (set AKKOMA_IMAGE to pin a tag or digest).
-# Akkoma listens on 127.0.0.1:${AKKOMA_BIND_PORT:-4000}; put a TLS reverse proxy in front
-# of it for a public instance. Uses the same hardening the HugMesh cluster applies:
-# read-only root filesystem, no capabilities, config mounted 0440.
+# Images: ghcr.io/hugmesh/hugmesh-akkoma (the server) and ghcr.io/hugmesh/hugmesh-akkoma-web (the web UI,
+# sign-in through Akkoma's own OAuth, and the proxy that keeps users' tokens off the browser). Set
+# AKKOMA_IMAGE / AKKOMA_WEB_IMAGE to pin a tag or digest.
+#
+# Only the web service is published (127.0.0.1:${WEB_PORT:-8080}); Akkoma and PostgreSQL stay on the compose
+# network. The web service answers for Akkoma on the public host too (its Mastodon API for other clients,
+# federation, media), so ONE reverse proxy rule, everything to the web service, is all a public instance needs.
+# To run the server alone without the web UI: `docker compose up -d db config-init migrate akkoma`.
+# Same hardening the HugMesh cluster applies: read-only root filesystem, no capabilities, config 0440.
 name: hugmesh-akkoma
 
 x-akkoma: &akkoma
@@ -75,12 +81,29 @@ services:
   akkoma:
     <<: *akkoma
     restart: unless-stopped
-    ports: ["127.0.0.1:${AKKOMA_BIND_PORT:-4000}:4000"]
     depends_on:
       migrate: {condition: service_completed_successfully}
+
+  web:
+    image: ${AKKOMA_WEB_IMAGE:-ghcr.io/hugmesh/hugmesh-akkoma-web:beta}
+    restart: unless-stopped
+    environment:
+      HUGMESH_WEB_AKKOMA_URL: http://akkoma:4000
+      # the address people type; also the OAuth redirect origin
+      HUGMESH_WEB_PUBLIC_URL: ${AKKOMA_SCHEME:-https}://${AKKOMA_HOST}${AKKOMA_PORT:+:}${AKKOMA_PORT:-}
+    ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - web-state:/var/lib/hugmesh-web
+    depends_on:
+      akkoma: {condition: service_started}
 
 volumes:
   config:
   uploads:
   static:
   pgdata:
+  web-state:

@@ -8,8 +8,18 @@ name: Akkoma image (PR build)
 
 on:
   pull_request:
-    paths-ignore:
-      - '**/*.md'
+    paths:
+      - 'Dockerfile'
+      - 'mrf/**'
+      - 'hugmesh-*'
+      - 'config/**'
+      - 'VERSION'
+      - 'smoke-test.sh'
+      - 'check-upstream-pin.sh'
+      - 'scripts/release-channel.sh'
+      - 'scripts/test-release-channel.sh'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: read
