@@ -14,7 +14,7 @@ ARG JRE_IMAGE=eclipse-temurin:25-jre-noble@sha256:3c6d7b40c2e78d4a8f4fe00af8165c
 # ---- the web UI -------------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS ui
 ARG UI_REPO=https://github.com/hugmesh/hugmesh-mastodon-ui.git
-ARG UI_REF=ad83743a89223dabfbd59299bd770d345f1d9dec
+ARG UI_REF=6f2797ebc8898c93e437f03a0098e96319307c3f
 RUN apk add --no-cache git
 WORKDIR /ui
 RUN git init -q . \
@@ -31,9 +31,10 @@ FROM --platform=$BUILDPLATFORM ${JDK_IMAGE} AS build
 WORKDIR /src
 COPY mvnw pom.xml ./
 COPY .mvn .mvn
-RUN ./mvnw -B -ntp -q dependency:go-offline
+# Maven Central is fetched over the network on a CI runner: retry a transient failure, and keep the output.
+RUN for i in 1 2 3; do ./mvnw -B -ntp dependency:go-offline && exit 0; echo "dependency fetch failed (attempt $i)"; sleep 10; done; exit 1
 COPY src src
-RUN ./mvnw -B -ntp -q -DskipTests package \
+RUN for i in 1 2 3; do ./mvnw -B -ntp -DskipTests package && break; echo "package failed (attempt $i)"; sleep 10; done \
  && mv target/hugmesh-akkoma-web-*.jar /app.jar
 
 # ---- runtime ----------------------------------------------------------------------------------
