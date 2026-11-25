@@ -44,6 +44,29 @@ A status posted by someone else shows in an open page within a fraction of a sec
 standalone-only: `HUGMESH_WEB_STREAM_BRIDGE=false` removes it, and inside HugMesh the UI keeps using the mesh's own
 gateway and BFF proxy, unchanged (the UI's stream code is not modified).
 
+## Run it as a Tor onion service only
+
+For an instance that should be reachable **only** through Tor, with an address it creates for itself:
+
+```
+cd compose
+cp .env.onion.example .env      # three generated secrets; there is no host name to choose
+docker compose -f docker-compose.onion.yml up -d --build
+./onion-address.sh              # prints http://<56 characters>.onion (open it in Tor Browser)
+docker compose -f docker-compose.onion.yml exec akkoma /opt/akkoma/bin/pleroma_ctl user new <nick> <email> --admin
+```
+
+A small `tor` service (built from `onion/`, Debian's Tor) mints a v3 onion key on first start, keeps it in the `tor-private`
+volume (so the address survives restarts and upgrades; **back that volume up, it is the address**), and forwards the onion's
+port 80 to the web service. Only the public hostname is shared with the other services; the secret key is mounted nowhere
+else. Akkoma and the web service read the hostname at start, so the instance knows itself as its onion.
+
+What that gives you, checked on a real run (a separate Tor client fetched the instance, and a browser signed in and posted
+through the onion): nothing is published on the host; the application network is `internal`, so Akkoma, PostgreSQL and the
+web service have no route to the internet; federation is off. The cost is deliberate: an onion has no TLS or DNS, so there is
+no federation with other servers and no link previews or remote media. It is a private instance for the people who have its
+address.
+
 ## Run it inside HugMesh
 
 HugMesh's cluster manifests (`specs/cluster/manifests/akkoma` in

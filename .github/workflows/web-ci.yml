@@ -8,6 +8,7 @@ on:
     paths:
       - 'web/**'
       - 'compose/**'
+      - 'onion/**'
       - 'scripts/**'
       - '.github/workflows/web-ci.yml'
       - '.github/workflows/release-web.yml'
@@ -38,6 +39,13 @@ jobs:
 
       - name: web/VERSION equals the pom version
         run: bash scripts/check-web-version.sh
+
+      - name: Check the onion stack (compose file valid, nothing published, entrypoint parses)
+        run: |
+          sh -n onion/entrypoint.sh
+          SECRET_KEY_BASE=x SIGNING_SALT=x DB_PASSWORD=x docker compose -f compose/docker-compose.onion.yml config > /tmp/onion.yml
+          if grep -qE '^\s+ports:' /tmp/onion.yml; then echo '::error::the onion stack publishes a port'; exit 1; fi
+          grep -q 'internal: true' /tmp/onion.yml || { echo '::error::the application network is not internal'; exit 1; }
 
       - name: Test the release-channel rules against both workflows
         run: |

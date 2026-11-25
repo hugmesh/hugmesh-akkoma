@@ -15,6 +15,7 @@
 #   AKKOMA_PORT        public port in the URL (default 443 for https, 80 for http)
 #   AKKOMA_NAME, AKKOMA_EMAIL      instance name and contact address
 #   AKKOMA_REGISTRATIONS_OPEN      "true" to allow open sign-up (default: closed)
+#   AKKOMA_FEDERATING              "false" to turn federation off (a private or onion-only instance); default true
 #   AKKOMA_SMTP_RELAY (+ _PORT _USER _PASSWORD _TLS _FROM)   outbound mail; unset = mail disabled
 import Config
 
@@ -32,7 +33,8 @@ config :pleroma, :instance,
   name: System.get_env("AKKOMA_NAME", "Akkoma"),
   email: System.get_env("AKKOMA_EMAIL", "admin@#{host}"),
   notify_email: System.get_env("AKKOMA_SMTP_FROM", "noreply@#{host}"),
-  registrations_open: System.get_env("AKKOMA_REGISTRATIONS_OPEN", "false") == "true"
+  registrations_open: System.get_env("AKKOMA_REGISTRATIONS_OPEN", "false") == "true",
+  federating: System.get_env("AKKOMA_FEDERATING", "true") == "true"
 
 # `pleroma start` refuses to run without an uploads base_url. Uploads are served from
 # the instance's own host; see README.md, "Media host", for the trade-off.
