@@ -1,0 +1,156 @@
+# hugmesh-akkoma as a Tor ONION SERVICE ONLY: Akkoma + PostgreSQL + the web front door, reachable at an address this
+# stack mints for itself (a v3 .onion) and nowhere else. Nothing is published on the host, the application network has no
+# route to the internet, and federation is off.
+#
+#   cp .env.onion.example .env       # three generated secrets; there is NO host name to choose
+#   docker compose -f docker-compose.onion.yml up -d
+#   ./onion-address.sh               # prints http://<56 characters>.onion  (open it in Tor Browser)
+#   docker compose -f docker-compose.onion.yml exec akkoma /opt/akkoma/bin/pleroma_ctl user new <nick> <email> --admin
+#
+# How it works: the `tor` service creates the onion key on first start (kept in the `tor-private` volume, so the address
+# survives restarts and upgrades; DELETE that volume and you get a new address). It copies only the public hostname into the
+# `onion-public` volume; Akkoma and the web service read it at start to learn their own address. The secret key is never
+# mounted anywhere else. Back up `tor-private`: it IS the address.
+#
+# Limits, deliberately: no federation (ActivityPub between servers needs TLS and DNS, which an onion has neither of) and the
+# instance cannot fetch link previews or remote media. It is a private instance for the people who have its address.
+name: hugmesh-akkoma-onion
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+# every app container learns its address from the shared hostname file before it starts
+x-onion-env: &onion-host
+  AKKOMA_SCHEME: http
+  AKKOMA_PORT: "80"
+  AKKOMA_FEDERATING: "false"
+  AKKOMA_REGISTRATIONS_OPEN: "false"
+
+x-akkoma: &akkoma
+  image: ${AKKOMA_IMAGE:-ghcr.io/hugmesh/hugmesh-akkoma:beta}
+  <<: *hardening
+  networks: [backend]
+  environment:
+    <<: *onion-host
+    AKKOMA_NAME: ${AKKOMA_NAME:-Akkoma}
+    SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
+    SIGNING_SALT: ${SIGNING_SALT:?set SIGNING_SALT in .env}
+    DB_HOST: db
+    DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+  volumes:
+    - config:/etc/akkoma:ro
+    - uploads:/var/lib/akkoma/uploads
+    - static:/var/lib/akkoma/static
+    - onion-public:/onion:ro
+
+services:
+  db:
+    image: ${AKKOMA_PG_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    networks: [backend]
+    environment:
+      POSTGRES_USER: akkoma
+      POSTGRES_DB: akkoma
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U akkoma -d akkoma"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # volumes are created root-owned; hand the two the onion image writes to uid 1000
+  onion-perms:
+    build: {context: ../onion}
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown 1000:1000 /var/lib/tor-hs /onion-public && chmod 0700 /var/lib/tor-hs && chmod 0755 /onion-public"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    network_mode: none
+    volumes:
+      - tor-private:/var/lib/tor-hs
+      - onion-public:/onion-public
+
+  tor:
+    build: {context: ../onion}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # on the internal network (to reach the web service) AND on the one network that has a route out (to reach Tor)
+    networks: [backend, egress]
+    environment:
+      ONION_TARGET: web:8080
+    volumes:
+      - tor-private:/var/lib/tor-hs
+      - onion-public:/onion-public
+    depends_on:
+      onion-perms: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /onion-public/hostname"]
+      interval: 3s
+      timeout: 2s
+      retries: 60
+
+  config-init:
+    image: ${AKKOMA_IMAGE:-ghcr.io/hugmesh/hugmesh-akkoma:beta}
+    user: "0:0"
+    entrypoint: ["sh", "-c", "cat /seed/config.exs > /etc/akkoma/config.exs && chown 0:1000 /etc/akkoma/config.exs && chmod 0440 /etc/akkoma/config.exs"]
+    volumes:
+      - ../config/standalone.exs:/seed/config.exs:ro
+      - config:/etc/akkoma
+    network_mode: none
+
+  migrate:
+    <<: *akkoma
+    entrypoint: ["sh", "-c", "AKKOMA_HOST=\"$$(cat /onion/hostname)\" exec \"$$@\"", "--"]
+    command: ["/opt/akkoma/bin/pleroma_ctl", "migrate"]
+    depends_on:
+      db: {condition: service_healthy}
+      config-init: {condition: service_completed_successfully}
+      tor: {condition: service_healthy}
+    restart: "no"
+
+  akkoma:
+    <<: *akkoma
+    entrypoint: ["sh", "-c", "AKKOMA_HOST=\"$$(cat /onion/hostname)\" exec \"$$@\"", "--"]
+    command: ["/opt/akkoma/bin/pleroma", "start"]
+    restart: unless-stopped
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  # No `ports:` anywhere in this file: the only way in is the onion service.
+  web:
+    image: ${AKKOMA_WEB_IMAGE:-ghcr.io/hugmesh/hugmesh-akkoma-web:beta}
+    <<: *hardening
+    restart: unless-stopped
+    networks: [backend]
+    entrypoint: ["sh", "-c", "HUGMESH_WEB_PUBLIC_URL=\"http://$$(cat /onion/hostname)\" exec \"$$@\"", "--"]
+    command: ["java", "-jar", "/app/app.jar"]
+    environment:
+      HUGMESH_WEB_AKKOMA_URL: http://akkoma:4000
+    volumes:
+      - web-state:/var/lib/hugmesh-web
+      - onion-public:/onion:ro
+    depends_on:
+      akkoma: {condition: service_started}
+
+networks:
+  # no route off the host: the app, its database and the web service cannot reach the internet, and nothing outside can reach them
+  backend:
+    internal: true
+  # the one network with a route out, joined only by tor
+  egress: {}
+
+volumes:
+  config:
+  uploads:
+  static:
+  pgdata:
+  web-state:
+  tor-private:
+  onion-public:
