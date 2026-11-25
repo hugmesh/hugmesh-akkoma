@@ -142,8 +142,10 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # GHCR_PUSH_TOKEN (a classic token with write:packages, owned by GHCR_PUSH_USER) is a FALLBACK for a package whose
+          # "Manage Actions access" does not list this repository; with neither set, the workflow's own token is used.
+          username: ${{ vars.GHCR_PUSH_USER || github.actor }}
+          password: ${{ secrets.GHCR_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
       # Only the immutable :X.Y.Z (or :X.Y.Z-beta.N) is checked here. The
       # floating tags :beta, :X.Y and :latest are meant to move to a newer
