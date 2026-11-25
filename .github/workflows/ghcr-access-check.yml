@@ -1,0 +1,40 @@
+# Diagnostic: can THIS repository's workflow token push to the GHCR packages it publishes? Pushes a one-layer scratch image
+# under a throw-away tag and removes nothing; run it by hand after changing a package's "Manage Actions access". It exists because
+# the real publish only reaches its push after about 40 minutes of building, so a missing grant otherwise shows up very late.
+name: GHCR access check
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: package to test
+        required: true
+        default: hugmesh-akkoma
+        type: choice
+        options: [hugmesh-akkoma, hugmesh-akkoma-web]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push a scratch image
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/hugmesh/$PACKAGE:access-check-${GITHUB_RUN_ID}"
+          mkdir ctx
+          printf 'FROM scratch\nLABEL org.opencontainers.image.description="GHCR write-access check; safe to delete"\n' > ctx/Dockerfile
+          docker buildx build --push -t "$ref" ctx
+          echo "::notice::pushed $ref: this repository's token can write to $PACKAGE"
