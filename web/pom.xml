@@ -15,7 +15,7 @@
   <artifactId>hugmesh-akkoma-web</artifactId>
   <!-- web/VERSION is what the release workflow reads; keep this equal to it
        (scripts/check-web-version.sh, run in CI, fails when they differ). -->
-  <version>0.5.1-beta.1</version>
+  <version>0.5.1-beta.2</version>
   <name>hugmesh-akkoma-web</name>
   <description>Front door for a standalone Akkoma: serves the Mastodon web UI, signs users in through
     Akkoma's own OAuth, keeps the token server-side, and proxies the Mastodon API and federation paths.</description>
